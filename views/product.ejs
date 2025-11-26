@@ -160,7 +160,7 @@
                     <form id="delete-review-form" action="/product/<%= product.id %>/reviews/<%= userReview.id %>/delete" method="POST"></form>
                   <% } %>
                 <% } else { %>
-                  <p class="text-muted mb-4">Sign in as a shopper to share your thoughts.</p>
+                  <p class="text-muted mb-4">Sign in as a shopper to share your thoughts!</p>
                 <% } %>
 
                 <% if (reviews && reviews.length) { %>
@@ -177,7 +177,7 @@
                         <% if (review.comment) { %>
                           <p class="mb-0 mt-2"><%= review.comment %></p>
                         <% } else { %>
-                          <p class="mb-0 mt-2 text-muted fst-italic">No comment provided.</p>
+                          <p class="mb-0 mt-2 text-muted fst-italic">No comments provided.</p>
                         <% } %>
                       </div>
                     <% }); %>

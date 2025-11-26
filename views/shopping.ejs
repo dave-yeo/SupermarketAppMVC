@@ -40,19 +40,19 @@
       <div class="hero-card mb-5">
         <div class="row g-0 align-items-center">
           <div class="col-lg-7 hero-body">
-            <p class="text-uppercase text-muted small mb-2">Hello again</p>
+            <p class="text-uppercase text-muted small mb-2">Hello again!</p>
             <h1 class="mb-3">
               Welcome back, <span class="text-primary"><%= user.username %></span>
             </h1>
             <p class="lead text-muted mb-4">
-              Curated goodies are waiting. Top up your basket, keep an eye on stock, and enjoy quick checkout tailored for our <span class="fw-semibold"><%= user.role %></span> shoppers.
+              Curated goodies are waiting. Add to your basket, keep an eye on new stocks, and enjoy fast checkout tailored for our <span class="fw-semibold"><%= user.role %></span> shoppers.
             </p>
             <div class="hero-cta">
               <a href="/cart" class="btn btn-primary">Open your cart</a>
               <% if (freshArrivals.length) { %>
-                <a href="/product/<%= freshArrivals[0].id %>" class="btn btn-outline-secondary">View a highlight</a>
+                <a href="/product/<%= freshArrivals[0].id %>" class="btn btn-outline-secondary">View highlight</a>
               <% } else { %>
-                <a class="btn btn-outline-secondary disabled" aria-disabled="true" tabindex="-1">View a highlight</a>
+                <a class="btn btn-outline-secondary disabled" aria-disabled="true" tabindex="-1">View highlight</a>
               <% } %>
             </div>
           </div>
@@ -85,11 +85,11 @@
               </select>
             </div>
             <div class="col-12 col-md-6 col-lg-4">
-              <button type="submit" class="btn btn-outline-primary w-100">Apply filter</button>
+              <button type="submit" class="btn btn-outline-primary w-100">Apply filters</button>
             </div>
             <% if (activeCategory) { %>
               <div class="col-12 col-lg-4">
-                <a href="/shopping" class="btn btn-link text-decoration-none">Clear filter</a>
+                <a href="/shopping" class="btn btn-link text-decoration-none">Clear filters</a>
               </div>
             <% } %>
           </form>
