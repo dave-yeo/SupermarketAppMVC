@@ -30,6 +30,9 @@
             <a class="nav-link active" aria-current="page" href="/admin/deliveries">Deliveries</a>
           </li>
           <li class="nav-item">
+            <a class="nav-link" href="/admin/refunds">Refunds</a>
+          </li>
+          <li class="nav-item">
             <a class="nav-link" href="/logout">Logout</a>
           </li>
         </ul>
@@ -79,6 +82,11 @@
                       <span class="badge <%= order.delivery_method === 'delivery' ? 'bg-primary-subtle text-primary' : 'bg-light text-dark' %> text-uppercase">
                         <%= order.delivery_method === 'delivery' ? 'Delivery' : 'Pickup' %>
                       </span>
+                      <% if (order.refund_request && order.refund_request.status) { %>
+                        <span class="badge bg-secondary-subtle text-secondary text-uppercase">
+                          Refund <%= order.refund_request.status %>
+                        </span>
+                      <% } %>
                       <span class="badge bg-dark-subtle text-dark">Total: $<%= Number(order.total).toFixed(2) %></span>
                     </div>
                   </div>
@@ -86,6 +94,20 @@
               </h2>
               <div id="delivery-<%= order.id %>" class="accordion-collapse collapse <%= index === 0 ? 'show' : '' %>" aria-labelledby="delivery-heading-<%= order.id %>" data-bs-parent="#admin-deliveries">
                 <div class="accordion-body">
+                  <% const warnings = []; %>
+                  <% if (order.high_value_order) { %>
+                    <% warnings.push('Transaction total exceeds $1000.'); %>
+                  <% } %>
+                  <% if (warnings.length) { %>
+                    <div class="alert alert-warning">
+                      <div class="fw-semibold mb-1">Warning</div>
+                      <ul class="mb-0">
+                        <% warnings.forEach(function(warning) { %>
+                          <li><%= warning %></li>
+                        <% }); %>
+                      </ul>
+                    </div>
+                  <% } %>
                   <div class="row g-4">
                     <div class="col-12 col-lg-4">
                       <div class="card h-100 shadow-sm">
@@ -136,7 +158,7 @@
                         </div>
                       </div>
 
-                      <div class="card shadow-sm">
+                      <div class="card shadow-sm mb-3">
                         <div class="card-body">
                           <h5 class="card-title mb-3">Delivery management</h5>
                           <form action="/orders/<%= order.id %>/delivery" method="POST" class="row gy-3">
@@ -172,6 +194,30 @@
                           </form>
                         </div>
                       </div>
+
+                      <div class="card shadow-sm">
+                        <div class="card-body">
+                          <h5 class="card-title mb-3">Payment & refunds</h5>
+                          <% const paymentMethod = order.payment_method || 'unknown'; %>
+                          <% const paymentStatus = order.payment_status || 'unpaid'; %>
+                          <% const captureRef = order.payment_reference || ''; %>
+                          <% const canRefund = paymentMethod === 'paypal' && captureRef; %>
+                          <% const isRefunded = paymentStatus === 'refunded'; %>
+                          <div class="d-flex flex-column flex-md-row justify-content-between gap-3">
+                            <div>
+                              <p class="mb-1"><strong>Method:</strong> <%= paymentMethod %></p>
+                              <p class="mb-1"><strong>Status:</strong> <%= paymentStatus %></p>
+                            </div>
+                          </div>
+
+                          <% if (!canRefund) { %>
+                            <div class="alert alert-warning py-2 mb-0 small">
+                              Refunds are available only for PayPal orders with a capture reference.
+                            </div>
+                          <% } %>
+
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -188,5 +234,6 @@
       <small>&copy; <%= new Date().getFullYear() %> Supermarket App</small>
     </div>
   </footer>
+
 </body>
 </html>

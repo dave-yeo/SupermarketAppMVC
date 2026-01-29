@@ -60,14 +60,14 @@ const create = (userId, cartItems, options, callback) => {
                     return reject(new Error(`Invalid quantity detected for ${item.productName}.`));
                 }
 
-                const productSql = 'SELECT quantity FROM products WHERE id = ? FOR UPDATE';
+                const productSql = 'SELECT quantity, is_deleted FROM products WHERE id = ? FOR UPDATE';
                 connection.query(productSql, [item.productId], (productError, productRows) => {
                     if (productError) {
                         return reject(productError);
                     }
 
-                    if (productRows.length === 0) {
-                        return reject(new Error(`${item.productName} does not exist.`));
+                    if (productRows.length === 0 || productRows[0].is_deleted) {
+                        return reject(new Error(`${item.productName || 'This product'} is no longer available.`));
                     }
 
                     const availableQuantity = Number(productRows[0].quantity);
@@ -136,7 +136,8 @@ const findByUser = (userId, callback) => {
 
 const findById = (orderId, callback) => {
     const sql = `
-        SELECT id, user_id, total, created_at, delivery_method, delivery_address, delivery_fee
+        SELECT id, user_id, total, created_at, delivery_method, delivery_address, delivery_fee,
+               payment_method, payment_status, payment_reference
         FROM orders
         WHERE id = ?
         LIMIT 1
@@ -148,11 +149,15 @@ const findAllWithUsers = (callback) => {
     const sql = `
         SELECT
             o.id,
+            o.user_id,
             o.total,
             o.created_at,
             o.delivery_method,
             o.delivery_address,
             o.delivery_fee,
+            o.payment_method,
+            o.payment_status,
+            o.payment_reference,
             u.username,
             u.email,
             u.contact,
@@ -176,11 +181,20 @@ const findItemsByOrderIds = (orderIds, callback) => {
     }
 
     const sql = `
-        SELECT oi.order_id, oi.product_id, oi.quantity, oi.price, p.productName, p.image, p.discountPercentage, p.offerMessage
+        SELECT
+            oi.order_id,
+            oi.product_id,
+            oi.quantity,
+            oi.price,
+            COALESCE(p.productName, 'Deleted product') AS productName,
+            p.image,
+            p.discountPercentage,
+            p.offerMessage,
+            p.is_deleted
         FROM order_items oi
-        JOIN products p ON p.id = oi.product_id
+        LEFT JOIN products p ON p.id = oi.product_id
         WHERE oi.order_id IN (?)
-        ORDER BY oi.order_id DESC, p.productName ASC
+        ORDER BY oi.order_id DESC, productName ASC
     `;
     connection.query(sql, [orderIds], callback);
 };
@@ -203,6 +217,7 @@ const getBestSellers = (limit, callback) => {
             SUM(oi.quantity) AS totalSold
         FROM order_items oi
         JOIN products p ON p.id = oi.product_id
+        WHERE p.is_deleted = 0
         GROUP BY p.id, p.productName, p.price, p.image, p.discountPercentage, p.offerMessage
         ORDER BY totalSold DESC
         LIMIT ?
@@ -228,6 +243,21 @@ const updateDelivery = (orderId, deliveryData, callback) => {
     connection.query(sql, [deliveryMethod, deliveryAddress, safeFee, safeFee, orderId], callback);
 };
 
+const updatePayment = (orderId, paymentData, callback) => {
+    const {
+        method = null,
+        status = null,
+        reference = null
+    } = paymentData || {};
+
+    const sql = `
+        UPDATE orders
+        SET payment_method = ?, payment_status = ?, payment_reference = ?
+        WHERE id = ?
+    `;
+    connection.query(sql, [method, status, reference, orderId], callback);
+};
+
 module.exports = {
     create,
     findByUser,
@@ -235,5 +265,6 @@ module.exports = {
     findAllWithUsers,
     findItemsByOrderIds,
     getBestSellers,
-    updateDelivery
+    updateDelivery,
+    updatePayment
 };

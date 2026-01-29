@@ -1,5 +1,7 @@
 const Cart = require('../models/cart');
 const Order = require('../models/order');
+const Payment = require('../models/payment');
+const RefundRequest = require('../models/refundRequest');
 const User = require('../models/user');
 
 const DELIVERY_FEE = 1.5;
@@ -35,6 +37,19 @@ const decorateProduct = (product) => {
         offerMessage,
         effectivePrice,
         hasDiscount
+    };
+};
+
+const normaliseOrderItem = (item) => {
+    if (!item) {
+        return item;
+    }
+    const name = item.productName || 'Deleted product';
+    const isDeleted = item.is_deleted === 1 || name === 'Deleted product';
+    return {
+        ...item,
+        productName: name,
+        is_deleted: isDeleted ? 1 : 0
     };
 };
 
@@ -93,56 +108,104 @@ const loadCartFromDb = (req, callback) => {
     });
 };
 
-/**
- * Handle checkout and order creation.
- */
-const checkout = (req, res) => {
+const calculateCartSubtotal = (cartItems) => (cartItems || []).reduce((sum, item) => {
+    const unitPrice = Number(item.price);
+    const quantity = Number(item.quantity);
+    if (!Number.isFinite(unitPrice) || !Number.isFinite(quantity)) {
+        return sum;
+    }
+    return sum + (unitPrice * quantity);
+}, 0);
+
+const getCheckoutContext = (req, overrides = {}) => new Promise((resolve, reject) => {
     if (!req.session.user || req.session.user.role !== 'user') {
-        req.flash('error', 'Only shoppers can complete checkout.');
-        return res.redirect('/cart');
+        return reject(new Error('Only shoppers can complete checkout.'));
     }
 
     loadCartFromDb(req, (cartErr, cartItems) => {
         if (cartErr) {
-            console.error('Error loading cart for checkout:', cartErr);
-            req.flash('error', 'Unable to load your cart right now.');
-            return res.redirect('/cart');
+            return reject(cartErr);
         }
 
         if (!cartItems.length) {
-            req.flash('error', 'Your cart is empty.');
-            return res.redirect('/cart');
+            return reject(new Error('Your cart is empty.'));
         }
 
-        const deliveryMethod = req.body.deliveryMethod === 'delivery' ? 'delivery' : 'pickup';
-        const providedAddress = sanitiseDeliveryAddress(req.body.deliveryAddress) || req.session.user.address;
-        const deliveryAddress = deliveryMethod === 'delivery' ? sanitiseDeliveryAddress(providedAddress) : null;
+        const deliveryMethodInput = overrides.deliveryMethod ?? req.body.deliveryMethod;
+        const deliveryMethod = deliveryMethodInput === 'delivery' ? 'delivery' : 'pickup';
+        const rawAddress = overrides.deliveryAddress ?? req.body.deliveryAddress ?? req.session.user.address;
+        const deliveryAddress = deliveryMethod === 'delivery'
+            ? sanitiseDeliveryAddress(rawAddress)
+            : null;
 
         if (deliveryMethod === 'delivery' && !deliveryAddress) {
-            req.flash('error', 'Please provide a delivery address.');
-            return res.redirect('/cart');
+            return reject(new Error('Please provide a delivery address.'));
         }
 
         const deliveryFee = computeDeliveryFee(req.session.user, deliveryMethod);
+        const subtotal = calculateCartSubtotal(cartItems);
+        const total = Number((subtotal + deliveryFee).toFixed(2));
 
-        Order.create(req.session.user.id, cartItems, { deliveryMethod, deliveryAddress, deliveryFee }, (error) => {
-            if (error) {
+        return resolve({
+            cartItems,
+            deliveryMethod,
+            deliveryAddress,
+            deliveryFee,
+            subtotal: Number(subtotal.toFixed(2)),
+            total
+        });
+    });
+});
+
+const createOrderFromContext = (req, context) => new Promise((resolve, reject) => {
+    if (!context || !context.cartItems || !context.cartItems.length) {
+        return reject(new Error('Your cart is empty.'));
+    }
+
+    Order.create(req.session.user.id, context.cartItems, {
+        deliveryMethod: context.deliveryMethod,
+        deliveryAddress: context.deliveryAddress,
+        deliveryFee: context.deliveryFee
+    }, (error, result) => {
+        if (error) {
+            return reject(error);
+        }
+
+        Cart.clear(req.session.user.id, (clearErr) => {
+            if (clearErr) {
+                console.error('Error clearing cart after checkout:', clearErr);
+            }
+            req.session.cart = [];
+        });
+
+        return resolve(result);
+    });
+});
+
+/**
+ * Handle checkout and order creation.
+ */
+const checkout = (req, res) => {
+    getCheckoutContext(req)
+        .then((context) => createOrderFromContext(req, context)
+            .then(() => {
+                req.flash('success', `Thanks for your purchase! ${context.deliveryMethod === 'delivery' ? 'We will deliver your order shortly.' : 'Pickup details will be shared soon.'}`);
+                return res.redirect('/orders/history');
+            })
+            .catch((error) => {
                 console.error('Error during checkout:', error);
                 req.flash('error', error.message || 'Unable to complete checkout. Please try again.');
                 return res.redirect('/cart');
+            }))
+        .catch((error) => {
+            if (error && error.message) {
+                req.flash('error', error.message);
+            } else {
+                console.error('Error loading cart for checkout:', error);
+                req.flash('error', 'Unable to load your cart right now.');
             }
-
-            Cart.clear(req.session.user.id, (clearErr) => {
-                if (clearErr) {
-                    console.error('Error clearing cart after checkout:', clearErr);
-                }
-                req.session.cart = [];
-            });
-
-            req.flash('success', `Thanks for your purchase! ${deliveryMethod === 'delivery' ? 'We will deliver your order shortly.' : 'Pickup details will be shared soon.'}`);
-            return res.redirect('/orders/history');
+            return res.redirect('/cart');
         });
-    });
 };
 
 /**
@@ -190,24 +253,39 @@ const history = (req, res) => {
             }, {});
 
             (itemRows || []).forEach((item) => {
-                if (!itemsByOrder[item.order_id]) {
-                    itemsByOrder[item.order_id] = [];
+                const safeItem = normaliseOrderItem(item);
+                if (!itemsByOrder[safeItem.order_id]) {
+                    itemsByOrder[safeItem.order_id] = [];
                 }
-                itemsByOrder[item.order_id].push(item);
+                itemsByOrder[safeItem.order_id].push(safeItem);
             });
 
-            Order.getBestSellers(4, (bestErr, bestRows) => {
-                if (bestErr) {
-                    console.error('Error fetching best sellers:', bestErr);
+            RefundRequest.findByOrderIds(orderIds, (refundErr, refundRows) => {
+                if (refundErr) {
+                    console.error('Error fetching refund requests:', refundErr);
                 }
 
-                res.render('orderHistory', {
-                    user: sessionUser,
-                    orders,
-                    orderItems: itemsByOrder,
-                    bestSellers: (bestRows || []).map(decorateProduct),
-                    messages: req.flash('success'),
-                    errors: req.flash('error')
+                const refundRequestsByOrder = (refundRows || []).reduce((acc, row) => {
+                    if (!acc[row.order_id]) {
+                        acc[row.order_id] = row;
+                    }
+                    return acc;
+                }, {});
+
+                Order.getBestSellers(4, (bestErr, bestRows) => {
+                    if (bestErr) {
+                        console.error('Error fetching best sellers:', bestErr);
+                    }
+
+                    res.render('orderHistory', {
+                        user: sessionUser,
+                        orders,
+                        orderItems: itemsByOrder,
+                        refundRequests: refundRequestsByOrder,
+                        bestSellers: (bestRows || []).map(decorateProduct),
+                        messages: req.flash('success'),
+                        errors: req.flash('error')
+                    });
                 });
             });
         });
@@ -223,6 +301,14 @@ const listAllDeliveries = (req, res) => {
         }
 
         const orders = orderRows || [];
+        const warningById = orders.reduce((acc, order) => {
+            const totalAmount = Number(order.total || 0);
+            acc[order.id] = {
+                ...order,
+                high_value_order: Number.isFinite(totalAmount) && totalAmount > 1000
+            };
+            return acc;
+        }, {});
         const orderIds = orders.map(order => order.id);
 
         Order.findItemsByOrderIds(orderIds, (itemsErr, itemRows) => {
@@ -238,18 +324,61 @@ const listAllDeliveries = (req, res) => {
             }, {});
 
             (itemRows || []).forEach((item) => {
-                if (!itemsByOrder[item.order_id]) {
-                    itemsByOrder[item.order_id] = [];
+                const safeItem = normaliseOrderItem(item);
+                if (!itemsByOrder[safeItem.order_id]) {
+                    itemsByOrder[safeItem.order_id] = [];
                 }
-                itemsByOrder[item.order_id].push(item);
+                itemsByOrder[safeItem.order_id].push(safeItem);
             });
 
-            res.render('adminDeliveries', {
-                user: req.session.user,
-                orders,
-                orderItems: itemsByOrder,
-                messages: req.flash('success'),
-                errors: req.flash('error')
+            Payment.getRefundTotals(orderIds, (refundErr, refundRows) => {
+                if (refundErr) {
+                    console.error('Error fetching refund totals:', refundErr);
+                }
+
+                const refundMap = (refundRows || []).reduce((acc, row) => {
+                    acc[row.order_id] = Number(row.refunded_total || 0);
+                    return acc;
+                }, {});
+
+                RefundRequest.findByOrderIds(orderIds, (requestErr, requestRows) => {
+                    if (requestErr) {
+                        console.error('Error fetching refund requests:', requestErr);
+                    }
+
+                    const requestMap = (requestRows || []).reduce((acc, row) => {
+                        if (!acc[row.order_id]) {
+                            acc[row.order_id] = row;
+                        }
+                        return acc;
+                    }, {});
+
+                    const ordersWithRefunds = orders.map((order) => ({
+                        ...order,
+                        refunded_total: refundMap[order.id] || 0,
+                        refund_request: requestMap[order.id] || null
+                    }));
+                    const ordersWithAlerts = ordersWithRefunds.map((order) => {
+                        const warningSource = warningById[order.id];
+                        if (!warningSource) {
+                            return order;
+                        }
+                        return {
+                            ...order,
+                            daily_order_count: warningSource.daily_order_count,
+                            daily_order_day: warningSource.daily_order_day,
+                            high_value_order: warningSource.high_value_order
+                        };
+                    });
+
+                    res.render('adminDeliveries', {
+                        user: req.session.user,
+                        orders: ordersWithAlerts,
+                        orderItems: itemsByOrder,
+                        messages: req.flash('success'),
+                        errors: req.flash('error')
+                    });
+                });
             });
         });
     });
@@ -375,7 +504,9 @@ const invoice = (req, res) => {
                     return res.redirect(redirectPath);
                 }
 
-                const items = (itemRows || []).filter((row) => row.order_id === orderId);
+                const items = (itemRows || [])
+                    .filter((row) => row.order_id === orderId)
+                    .map(normaliseOrderItem);
                 const deliveryFee = Number(order.delivery_fee || 0);
                 const subtotal = Number(order.total || 0) - deliveryFee;
 
@@ -397,6 +528,8 @@ const invoice = (req, res) => {
 
 module.exports = {
     checkout,
+    getCheckoutContext,
+    createOrderFromContext,
     history,
     listAllDeliveries,
     updateDeliveryDetails,

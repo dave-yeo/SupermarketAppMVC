@@ -28,6 +28,9 @@
               <a class="nav-link" href="/admin/deliveries">Deliveries</a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="/admin/refunds">Refunds</a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link active" aria-current="page" href="/orders/history">Order History</a>
             </li>
           <% } else { %>
@@ -109,14 +112,19 @@
                         </thead>
                         <tbody>
                           <% items.forEach(function(item) { %>
-                            <tr>
+                            <% const itemDeleted = item.is_deleted === 1 || item.productName === 'Deleted product'; %>
+                            <tr class="<%= itemDeleted ? 'table-warning' : '' %>">
                               <td>
                                 <div class="d-flex align-items-center gap-3">
-                                  <% if (item.image) { %>
+                                  <% if (item.image && !itemDeleted) { %>
                                     <img src="/images/<%= item.image %>" alt="<%= item.productName %>" width="50" height="50" class="rounded">
                                   <% } %>
                                   <div>
-                                    <a href="/product/<%= item.product_id %>" class="text-decoration-none"><%= item.productName %></a>
+                                    <% if (itemDeleted) { %>
+                                      <span class="text-muted">Deleted product</span>
+                                    <% } else { %>
+                                      <a href="/product/<%= item.product_id %>" class="text-decoration-none"><%= item.productName %></a>
+                                    <% } %>
                                   </div>
                                 </div>
                               </td>
@@ -189,6 +197,41 @@
                       </form>
                     </div>
                   </div>
+
+                  <% if (user && user.role === 'user') { %>
+                    <% const refundRequest = refundRequests ? refundRequests[order.id] : null; %>
+                    <div class="card mt-3">
+                      <div class="card-body">
+                        <h5 class="mb-2">Refund request</h5>
+                        <% if (refundRequest) { %>
+                          <p class="mb-1"><strong>Status:</strong> <%= refundRequest.status %></p>
+                          <% if (refundRequest.requested_amount) { %>
+                            <p class="mb-1"><strong>Requested:</strong> $<%= Number(refundRequest.requested_amount).toFixed(2) %></p>
+                          <% } %>
+                          <% if (refundRequest.refunded_amount) { %>
+                            <p class="mb-1"><strong>Refunded:</strong> $<%= Number(refundRequest.refunded_amount).toFixed(2) %></p>
+                          <% } %>
+                          <% if (refundRequest.admin_note) { %>
+                            <p class="mb-0 text-muted"><strong>Admin note:</strong> <%= refundRequest.admin_note %></p>
+                          <% } %>
+                        <% } else { %>
+                          <form action="/orders/<%= order.id %>/refund-request" method="POST" class="row gy-2">
+                            <div class="col-12 col-md-4">
+                              <label for="refund-amount-<%= order.id %>" class="form-label">Amount (optional)</label>
+                              <input type="number" step="0.01" min="0.01" class="form-control" id="refund-amount-<%= order.id %>" name="amount" placeholder="e.g. 1.50">
+                            </div>
+                            <div class="col-12 col-md-8">
+                              <label for="refund-reason-<%= order.id %>" class="form-label">Reason</label>
+                              <input type="text" class="form-control" id="refund-reason-<%= order.id %>" name="reason" placeholder="Tell us what went wrong" required>
+                            </div>
+                            <div class="col-12 d-flex justify-content-end">
+                              <button type="submit" class="btn btn-outline-danger btn-sm">Request refund</button>
+                            </div>
+                          </form>
+                        <% } %>
+                      </div>
+                    </div>
+                  <% } %>
                 </div>
               </div>
             </div>

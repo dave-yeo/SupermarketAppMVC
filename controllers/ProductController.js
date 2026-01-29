@@ -1,5 +1,6 @@
 const Product = require('../models/product');
 const Review = require('../models/review');
+const Order = require('../models/order');
 
 const toCurrency = (value, precision = 2) => {
     const numberValue = Number.parseFloat(value);
@@ -76,6 +77,46 @@ const enhanceProductRecord = (product) => {
 };
 
 const ProductController = {
+    showShopping: (req, res) => {
+        const activeCategory = req.query.category ? String(req.query.category).trim() : '';
+        const productFetcher = activeCategory
+            ? (cb) => Product.getByCategory(activeCategory, cb)
+            : (cb) => Product.getAll(cb);
+
+        productFetcher((error, products) => {
+            if (error) {
+                console.error('Error loading products:', error);
+                req.flash('error', 'Unable to load products right now.');
+                return res.redirect('/');
+            }
+
+            Product.getCategories((catErr, categoryRows) => {
+                if (catErr) {
+                    console.error('Error loading categories:', catErr);
+                }
+
+                const productList = (products || []).map(enhanceProductRecord);
+                const categories = (categoryRows || []).map((row) => row.category).filter(Boolean);
+
+                Order.getBestSellers(3, (bestErr, bestSellers) => {
+                    if (bestErr) {
+                        console.error('Error fetching best sellers:', bestErr);
+                    }
+
+                    res.render('shopping', {
+                        user: req.session.user,
+                        products: productList,
+                        categories,
+                        activeCategory,
+                        bestSellers: (bestSellers && bestSellers.length) ? bestSellers.map(enhanceProductRecord) : [],
+                        messages: req.flash('success'),
+                        errors: req.flash('error')
+                    });
+                });
+            });
+        });
+    },
+
     // Show the inventory page
     showInventory: (req, res) => {
         Product.getAll((error, results) => {

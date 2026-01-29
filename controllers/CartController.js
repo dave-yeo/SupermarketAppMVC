@@ -78,7 +78,7 @@ const addToCart = (req, res) => {
         return res.redirect('/shopping');
     }
 
-    db.query('SELECT * FROM products WHERE id = ?', [productId], (error, results) => {
+    db.query('SELECT * FROM products WHERE id = ? AND is_deleted = 0', [productId], (error, results) => {
         if (error) {
             console.error('Error fetching product:', error);
             req.flash('error', 'Unable to add product to cart at this time.');
@@ -86,14 +86,14 @@ const addToCart = (req, res) => {
         }
 
         if (results.length === 0) {
-            req.flash('error', 'Product not found.');
+            req.flash('error', 'Product not found or is no longer available.');
             return res.redirect('/shopping');
         }
 
         Cart.addItem(req.session.user.id, productId, quantity, (addErr) => {
             if (addErr) {
                 console.error('Error persisting cart item:', addErr);
-                req.flash('error', 'Unable to add product to cart at this time.');
+                req.flash('error', addErr.message || 'Unable to add product to cart at this time.');
                 return res.redirect('/shopping');
             }
 
@@ -127,7 +127,8 @@ const viewCart = (req, res) => {
             cart: req.session.cart || [],
             user: req.session.user,
             messages: req.flash('success'),
-            errors: req.flash('error')
+            errors: req.flash('error'),
+            paypalClientId: process.env.PAYPAL_CLIENT_ID || ''
         });
     });
 };
@@ -150,7 +151,7 @@ const updateCartItem = (req, res) => {
     Cart.setQuantity(req.session.user.id, productId, validatedQuantity, (err, result) => {
         if (err) {
             console.error('Error updating cart item:', err);
-            req.flash('error', 'Unable to update cart item.');
+            req.flash('error', err.message || 'Unable to update cart item.');
             return res.redirect('/cart');
         }
 
@@ -163,7 +164,7 @@ const updateCartItem = (req, res) => {
         return syncCartFromDb(req, (syncErr) => {
             if (syncErr) {
                 console.error('Error syncing cart after update:', syncErr);
-                req.flash('error', 'Unable to refresh your cart.');
+                req.flash('error', syncErr.message || 'Unable to refresh your cart.');
                 return res.redirect('/cart');
             }
             return res.redirect('/cart');
